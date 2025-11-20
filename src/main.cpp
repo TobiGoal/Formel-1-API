@@ -93,41 +93,55 @@ void handleRoot(){
 }
 
 void handleApiDrivers(){
+  // Prüfe, ob der Query-Parameter 'q' vorhanden ist und nicht leer ist
   if(!server.hasArg("q") || server.arg("q").length() == 0){
+    // Fehlende Abfrage: sende HTTP 400 mit JSON-Fehler
     server.send(400, "application/json", "{\"error\":\"missing query param q\"}");
     return;
   }
+
+  // Lese den Suchbegriff und baue die URL für die upstream-API
   String q = server.arg("q");
   String endpoint = "https://f1api.dev/api/drivers/search?q=" + urlEncode(q) + "&limit=30&offset=0";
 
+  // Erzeuge einen TLS-fähigen Client; setInsecure() deaktiviert die Zertifikatprüfung
   WiFiClientSecure client;
   client.setInsecure(); // skip certificate validation (easier for examples). For production, verify certs.
+
+  // HTTP-Client für die Anfrage an die externe API
   HTTPClient http;
-  http.begin(client, endpoint);
-  int code = http.GET();
+  http.begin(client, endpoint); // öffne Verbindung zum Endpoint
+  int code = http.GET(); // führe GET-Anfrage aus und erhalte HTTP-Status
+
   if(code > 0){
+    // Lese den gesamten Antworttext (JSON) als String
     String payload = http.getString();
-    // Versuche die JSON-Antwort mit ArduinoJson zu parsen und als HTML zu rendern
-    DynamicJsonDocument doc(16384);
+
+    // Versuche, das JSON mit ArduinoJson zu parsen
+    DynamicJsonDocument doc(16384); // Puffergröße ggf. anpassen
     DeserializationError err = deserializeJson(doc, payload);
+
     if(err){
-      // Wenn Parsen fehlschlägt, liefere den rohen Payload als Fallback
+      // Parsen fehlgeschlagen: sende eine erklärende HTML-Meldung zurück
       server.send(200, "text/html", String("<div>Fehler beim Parsen der Upstream-Antwort: ") + err.c_str() + "</div>");
     } else {
+      // Prüfe, ob das 'drivers'-Array vorhanden ist
       if(!doc.containsKey("drivers") || !doc["drivers"].is<JsonArray>()){
         server.send(200, "text/html", "<div>Keine Fahrer gefunden.</div>");
       } else {
+        // Baue HTML aus den relevanten Feldern jedes Fahrers
         String html = "";
         JsonArray drivers = doc["drivers"].as<JsonArray>();
         for(JsonObject d : drivers){
-          const char* name = d["name"] | "";
-          const char* surname = d["surname"] | "";
-          const char* shortName = d["shortName"] | "";
+          const char* name = d["name"] | "";           // Vorname
+          const char* surname = d["surname"] | "";     // Nachname
+          const char* shortName = d["shortName"] | ""; // Kurzname
           const char* nationality = d["nationality"] | "";
           const char* birthday = d["birthday"] | "";
           const char* number = d["number"] | "-";
           const char* url = d["url"] | "#";
 
+          // Zusammensetzen einer kleinen Karte als HTML
           html += "<div class='card'>";
           html += "<strong>";
           html += name;
@@ -142,13 +156,18 @@ void handleApiDrivers(){
           html += "<a href='"; html += url; html += "' target='_blank'>Wikipedia</a>";
           html += "</div>";
         }
+
+        // Sende das erzeugte HTML an den Browser (Content-Type text/html)
         server.send(200, "text/html", html);
       }
     }
   } else {
+    // Fehler bei der Verbindung zur upstream-API: sende 502 Bad Gateway
     String err = "{\"error\":\"upstream request failed\"}";
     server.send(502, "application/json", err);
   }
+
+  // Verbindung schließen / Ressourcen freigeben
   http.end();
 }
 
