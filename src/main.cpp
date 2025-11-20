@@ -3,6 +3,8 @@
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+// Parse upstream JSON on the ESP32
+#include <ArduinoJson.h>
 
 // --- CONFIGURE THESE ---
 const char* ssid = "WI-UC1";       // <-- set your Wi-Fi SSID
@@ -51,32 +53,17 @@ const char INDEX_HTML[] PROGMEM = R"rawliteral(
       status.textContent = `Suche nach "${q}"...`;
       results.innerHTML = '';
       try{
-        const resp = await fetch(`/api/drivers?q=${encodeURIComponent(q)}`);
-        if(!resp.ok) throw new Error(`Server returned ${resp.status}`);
-        const data = await resp.json();
-        render(data);
-      }catch(err){
-        status.textContent = 'Fehler: ' + err.message;
-      }
-    });
-
-    function render(data){
-      if(!data || !Array.isArray(data.drivers)){
-        status.textContent = 'Unerwartete Antwort vom Server.'; return;
-      }
-      status.textContent = `Gefundene Fahrer: ${data.total ?? data.drivers.length}`;
-      data.drivers.forEach(d => {
-        const div = document.createElement('div'); div.className='card';
-        div.innerHTML = `<strong>${d.name ?? ''} ${d.surname ?? ''}</strong> ${d.shortName? '('+d.shortName+')':''}`;
-        const meta = document.createElement('div'); meta.textContent = `Nationality: ${d.nationality ?? ''} | Birthday: ${d.birthday ?? ''} | Number: ${d.number ?? '-'} `;
-        div.appendChild(meta);
-        const a = document.createElement('a'); a.href = d.url || '#'; a.target='_blank'; a.textContent = 'Wikipedia'; a.style.marginRight='12px'; div.appendChild(a);
-        const preBtn = document.createElement('button'); preBtn.textContent='Zeige JSON'; preBtn.onclick = ()=>{ if(pre.nextSibling) { pre.remove(); } else div.appendChild(pre); };
-        div.appendChild(preBtn);
-        const pre = document.createElement('pre'); pre.textContent = JSON.stringify(d, null, 2);
-        results.appendChild(div);
+          const resp = await fetch(`/api/drivers?q=${encodeURIComponent(q)}`);
+          if(!resp.ok) throw new Error(`Server returned ${resp.status}`);
+          const text = await resp.text();
+          // Server liefert bereits fertiges HTML; setze es direkt ein
+          results.innerHTML = text;
+        }catch(err){
+          status.textContent = 'Fehler: ' + err.message;
+        }
       });
-    }
+
+      // Hinweis: Rendering wird jetzt serverseitig durchgeführt
   </script>
 </body>
 </html>
@@ -120,7 +107,44 @@ void handleApiDrivers(){
   int code = http.GET();
   if(code > 0){
     String payload = http.getString();
-    server.send(200, "application/json", payload);
+    // Versuche die JSON-Antwort mit ArduinoJson zu parsen und als HTML zu rendern
+    DynamicJsonDocument doc(16384);
+    DeserializationError err = deserializeJson(doc, payload);
+    if(err){
+      // Wenn Parsen fehlschlägt, liefere den rohen Payload als Fallback
+      server.send(200, "text/html", String("<div>Fehler beim Parsen der Upstream-Antwort: ") + err.c_str() + "</div>");
+    } else {
+      if(!doc.containsKey("drivers") || !doc["drivers"].is<JsonArray>()){
+        server.send(200, "text/html", "<div>Keine Fahrer gefunden.</div>");
+      } else {
+        String html = "";
+        JsonArray drivers = doc["drivers"].as<JsonArray>();
+        for(JsonObject d : drivers){
+          const char* name = d["name"] | "";
+          const char* surname = d["surname"] | "";
+          const char* shortName = d["shortName"] | "";
+          const char* nationality = d["nationality"] | "";
+          const char* birthday = d["birthday"] | "";
+          const char* number = d["number"] | "-";
+          const char* url = d["url"] | "#";
+
+          html += "<div class='card'>";
+          html += "<strong>";
+          html += name;
+          html += " ";
+          html += surname;
+          html += "</strong> ";
+          if(strlen(shortName) > 0){ html += "("; html += shortName; html += ") "; }
+          html += "<div>Nationality: "; html += nationality;
+          html += " | Birthday: "; html += birthday;
+          html += " | Number: "; html += number;
+          html += "</div>";
+          html += "<a href='"; html += url; html += "' target='_blank'>Wikipedia</a>";
+          html += "</div>";
+        }
+        server.send(200, "text/html", html);
+      }
+    }
   } else {
     String err = "{\"error\":\"upstream request failed\"}";
     server.send(502, "application/json", err);
