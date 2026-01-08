@@ -7,7 +7,7 @@
 #include <ArduinoJson.h>
 
 // --- CONFIGURE THESE ---
-const char* ssid = "WI-UC1";       // <-- set your Wi-Fi SSID
+const char* ssid = "WI-UC2";       // <-- set your Wi-Fi SSID
 const char* password = "UbiComp4"; // <-- set your Wi-Fi password
 // ------------------------
 
